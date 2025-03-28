@@ -172,7 +172,7 @@ axs[0].grid(True, which="both", ls="--")
 axs[1].loglog(t_vals, survival, marker='o', linestyle='-')
 axs[1].set_xlabel("Time")
 axs[1].set_ylabel("Population fraction")
-axs[1].setTitle("Log-log Plot: Survival Function")
+axs[1].set_title("Log-log Plot: Survival Function")
 axs[1].grid(True, which="both", ls="--")
 
 # グラフ全体の調整
