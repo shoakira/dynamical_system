@@ -19,7 +19,7 @@ start_time = time.time()
 
 # シミュレーションパラメータ
 E = 1.01           # 全エネルギー（サドルエネルギー1より上）
-n_traj = 1000000     # 初期状態の数
+n_traj = 10000000     # 初期状態の数
 T_max = 100000.0     # 最長シミュレーション時間
 dt = 0.01         # 時間刻み幅
 
@@ -155,6 +155,9 @@ if __name__ == "__main__":
     batch_size = min(n_traj, 10000)  # 一度に処理するトラジェクトリ数を制限
     recrossing_times = []
     
+    # 進捗表示のための変数
+    last_percentage = -1
+    
     for batch_start in range(0, n_traj, batch_size):
         batch_end = min(batch_start + batch_size, n_traj)
         batch_count = batch_end - batch_start
@@ -166,7 +169,18 @@ if __name__ == "__main__":
         )
         
         recrossing_times.extend(batch_results)
-        print(f"進捗: {batch_end}/{n_traj} 完了")
+        
+        # 現在の進捗を計算（パーセンテージ）
+        current_percentage = int(batch_end / n_traj * 100)
+        
+        # 10%単位でのみ進捗を表示
+        if current_percentage % 10 == 0 and current_percentage != last_percentage:
+            print(f"進捗: {current_percentage}% 完了 ({batch_end}/{n_traj})")
+            last_percentage = current_percentage
+    
+    # 100%に達していない場合は最後に表示
+    if last_percentage < 100:
+        print(f"進捗: 100% 完了 ({n_traj}/{n_traj})")
     
     recrossing_times = np.array(recrossing_times)
     
