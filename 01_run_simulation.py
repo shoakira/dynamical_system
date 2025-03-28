@@ -25,8 +25,8 @@ import time
 
 # --- Simulation Parameters ---
 E = 1.05             # Total energy (must be > 1.0)
-N_TRAJ = 10000       # Number of trajectories
-T_MAX = 10000.0       # Maximum simulation time
+N_TRAJ = 100000       # Number of trajectories
+T_MAX = 100000.0       # Maximum simulation time
 DT = 0.002            # Time step for integration
 
 # --- Potential Parameters ---

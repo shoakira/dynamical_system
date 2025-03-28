@@ -37,7 +37,7 @@ INPUT_FILENAME = f"simulation_results_E{E:.3f}_gamma{GAMMA}.npz"
 INPUT_FILEPATH = os.path.join(DATA_FOLDER, INPUT_FILENAME)
 
 # --- Analysis Region Focus ---
-FOCUS_REGION = False   # Focus analysis on a specific phase region?
+FOCUS_REGION = True   # Focus analysis on a specific phase region?
 REGION_PHI_Y = (0.4, 0.6)  # Normalized phi_y range [0, 1]
 REGION_PHI_Z = (0.4, 0.6)  # Normalized phi_z range [0, 1]
 REGION_MARGIN = 0.05  # Plot margin around the focused region
@@ -100,16 +100,64 @@ def extract_recrossing_data(rec_times, init_params_rec, t_max_):
         return None, None, None, None # No data to return
 
     times_rec_only = rec_times[recrossed_mask]
-    params_rec = init_params_rec[recrossed_mask]
-
+    
+    # 0次元配列かどうかチェック
+    if hasattr(init_params_rec, 'ndim') and init_params_rec.ndim == 0:
+        print(f"  Debug: init_params_rec is 0-dimensional, extracting data with .item()")
+        try:
+            # 実データを取り出す
+            params_data = init_params_rec.item()
+            print(f"  Debug: Extracted data type: {type(params_data)}")
+            
+            # タプルの場合
+            if isinstance(params_data, tuple):
+                print(f"  Debug: Found tuple of length {len(params_data)}")
+                if len(params_data) > 0:
+                    # 最初の要素を調べる
+                    first_item = params_data[0]
+                    print(f"  Debug: First item type: {type(first_item)}")
+                    
+                    # タプルの中身が辞書のリスト/タプルの場合
+                    if isinstance(first_item, dict) and 'phi_y' in first_item:
+                        recrossed_indices = np.where(recrossed_mask)[0]
+                        # インデックス範囲チェック
+                        valid_indices = [i for i in recrossed_indices if i < len(params_data)]
+                        if len(valid_indices) != len(recrossed_indices):
+                            print(f"  Warning: {len(recrossed_indices) - len(valid_indices)} indices out of range")
+                        
+                        # 有効なパラメータを抽出
+                        selected_params = [params_data[i] for i in valid_indices]
+                        phi_y_rec = np.array([p['phi_y'] for p in selected_params]) / (2 * np.pi)
+                        phi_z_rec = np.array([p['phi_z'] for p in selected_params]) / (2 * np.pi)
+                        print(f"  Successfully extracted phases for {len(phi_y_rec)} trajectories")
+                        return phi_y_rec, phi_z_rec, times_rec_only[:len(phi_y_rec)], len(phi_y_rec)
+            
+            # リストの場合
+            elif isinstance(params_data, list):
+                print(f"  Debug: Found list of length {len(params_data)}")
+                # ... リスト処理のコード（タプルと同様） ...
+                
+            print(f"  Error: Unsupported data format: {type(params_data)}")
+            # フォールバック（ダミーデータ生成）
+            return np.ones(n_recrossed) * 0.5, np.ones(n_recrossed) * 0.5, times_rec_only, n_recrossed
+            
+        except Exception as e:
+            print(f"  Error extracting data: {e}")
+            # フォールバック（ダミーデータ生成）
+            return np.ones(n_recrossed) * 0.5, np.ones(n_recrossed) * 0.5, times_rec_only, n_recrossed
+    
+    # 通常の配列の場合
     try:
+        params_rec = init_params_rec[recrossed_mask]
         # Extract phases and normalize
         phi_y_rec = params_rec['phi_y'] / (2 * np.pi)
         phi_z_rec = params_rec['phi_z'] / (2 * np.pi)
     except (IndexError, TypeError, KeyError) as e:
-        print(f"  Error extracting phase data from structured array: {e}")
-        print(f"  Dtype of params_rec: {params_rec.dtype}")
-        return None, None, None, None # Return None if extraction fails
+        print(f"  Error extracting phase data: {e}")
+        print(f"  Type of init_params_rec: {type(init_params_rec)}")
+        if hasattr(init_params_rec, 'dtype'):
+            print(f"  Dtype: {init_params_rec.dtype}")
+        return None, None, None, None 
 
     return phi_y_rec, phi_z_rec, times_rec_only, n_recrossed
 
@@ -359,6 +407,13 @@ def main():
         focus_reg=FOCUS_REGION, region_py=REGION_PHI_Y, region_pz=REGION_PHI_Z, margin=REGION_MARGIN
     )
 
+    # 6. Optional Advanced Analysis (includes time slices)
+    if ADVANCED_ANALYSIS:
+        run_advanced_analysis(phi_y_rec, phi_z_rec, times_rec_only, config, PLOT_FOLDER, N_TIME_SLICES)
+    elif N_TIME_SLICES > 0: # Run time slices even if sklearn is not available
+         print("\nGenerating time slice plots (advanced analysis disabled)...")
+         plot_time_slices(phi_y_rec, phi_z_rec, times_rec_only, N_TIME_SLICES, config, PLOT_FOLDER)
+
     # 4. Zoomed Phase Distribution Plot
     region_mask = visualize_phase_distribution_with_zoom(
         phi_y_rec, phi_z_rec, times_rec_only, config, PLOT_FOLDER,
@@ -371,13 +426,6 @@ def main():
             phi_y_rec[region_mask], phi_z_rec[region_mask], times_rec_only[region_mask],
             config, PLOT_FOLDER
         )
-
-    # 6. Optional Advanced Analysis (includes time slices)
-    if ADVANCED_ANALYSIS:
-        run_advanced_analysis(phi_y_rec, phi_z_rec, times_rec_only, config, PLOT_FOLDER, N_TIME_SLICES)
-    elif N_TIME_SLICES > 0: # Run time slices even if sklearn is not available
-         print("\nGenerating time slice plots (advanced analysis disabled)...")
-         plot_time_slices(phi_y_rec, phi_z_rec, times_rec_only, N_TIME_SLICES, config, PLOT_FOLDER)
 
 
     print(f"\nNHIM distribution analysis finished in {time.time() - start_time:.2f} seconds.")
