@@ -275,6 +275,196 @@ def simulate_single_wrapper(args):
         print(f"Error in trajectory {idx}: {e}")
         return idx, t_max_ # エラー時は最大時間を返す
 
+
+def extract_nhim_structure_with_tsne(phi_y, phi_z, recross_times):
+    """t-SNEを使った非線形構造抽出"""
+    from sklearn.manifold import TSNE
+    
+    # 特徴ベクトルを作成（位相角と再交差時間を組み合わせる）
+    features = np.column_stack([phi_y, phi_z, np.log10(recross_times)])
+    
+    # t-SNEで2次元に圧縮
+    tsne = TSNE(n_components=2, perplexity=30, learning_rate=200)
+    embedding = tsne.fit_transform(features)
+    
+    plt.figure(figsize=(12, 10))
+    plt.scatter(embedding[:, 0], embedding[:, 1], 
+                c=np.log10(recross_times), cmap='cividis', 
+                s=30, alpha=0.8, edgecolors='w', linewidths=0.2)
+    plt.colorbar(label='Log10(Recrossing Time)')
+    plt.title('t-SNE Visualization of NHIM Structure')
+    plt.tight_layout()
+    plt.savefig(os.path.join(data_folder, 'nhim_tsne_structure.pdf'))
+    plt.close()
+
+
+def extract_clusters_on_nhim(phi_y, phi_z, recross_times):
+    """再交差時間に基づくクラスタリングで構造を抽出"""
+    from sklearn.cluster import KMeans, DBSCAN
+    
+    # 特徴量の準備（位相と再交差時間）
+    features = np.column_stack([phi_y, phi_z, np.log10(recross_times)])
+    
+    # K-means クラスタリング
+    n_clusters = 5  # クラスタ数は調整可能
+    kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+    clusters = kmeans.fit_predict(features)
+    
+    # クラスタごとに可視化
+    plt.figure(figsize=(12, 10))
+    scatter = plt.scatter(phi_y, phi_z, c=clusters, cmap='tab10', 
+                         s=30, alpha=0.8, edgecolors='w', linewidths=0.2)
+    plt.colorbar(scatter, label='Cluster')
+    plt.xlabel('Initial Phase φy / (2π)')
+    plt.ylabel('Initial Phase φz / (2π)')
+    plt.title('Clusters in NHIM Structure Based on Recrossing Behavior')
+    plt.grid(True, linestyle=':', alpha=0.6)
+    plt.xlim(0, 1)
+    plt.ylim(0, 1)
+    plt.gca().set_aspect('equal')
+    plt.tight_layout()
+    plt.savefig(os.path.join(data_folder, 'nhim_clusters.pdf'))
+    plt.close()
+    
+    # 各クラスタの特性分析
+    for i in range(n_clusters):
+        mask = (clusters == i)
+        print(f"Cluster {i}: {np.sum(mask)} points")
+        print(f"  Mean recrossing time: {10**np.mean(np.log10(recross_times[mask])):.2e}")
+        print(f"  Min/Max recrossing time: {np.min(recross_times[mask]):.2e}/{np.max(recross_times[mask]):.2e}")
+        
+        
+def analyze_time_slices(phi_y, phi_z, recross_times):
+    """再交差時間のスライスごとに構造を可視化"""
+    # 対数スケールでスライスを作成
+    log_times = np.log10(recross_times)
+    min_log, max_log = np.min(log_times), np.max(log_times)
+    n_slices = 5
+    slice_edges = np.linspace(min_log, max_log, n_slices+1)
+    
+    plt.figure(figsize=(15, 12))
+    for i in range(n_slices):
+        plt.subplot(2, 3, i+1)
+        mask = (log_times >= slice_edges[i]) & (log_times < slice_edges[i+1])
+        
+        if np.sum(mask) > 0:
+            # 各スライス内のデータを可視化
+            plt.scatter(phi_y[mask], phi_z[mask], 
+                        c='darkblue', s=15, alpha=0.7, edgecolors='w', linewidths=0.1)
+            plt.xlim(0, 1)
+            plt.ylim(0, 1)
+            plt.grid(True, linestyle=':', alpha=0.4)
+            plt.title(f'Time Slice: 10^{slice_edges[i]:.1f} - 10^{slice_edges[i+1]:.1f}')
+            plt.xlabel('φy / (2π)') if i >= 3 else None
+            plt.ylabel('φz / (2π)') if i % 3 == 0 else None
+            plt.gca().set_aspect('equal')
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(data_folder, 'nhim_time_slices.pdf'))
+    plt.close()
+
+
+def visualize_density_and_gradients(phi_y, phi_z, recross_times):
+    """カーネル密度推定と勾配を用いた詳細構造の可視化"""
+    from scipy.stats import gaussian_kde
+    from scipy.ndimage import gaussian_gradient_magnitude
+    
+    # カーネル密度推定で滑らかな分布を作成
+    xy = np.vstack([phi_y, phi_z])
+    kde = gaussian_kde(xy, bw_method=0.05)  # バンド幅は調整可能
+    
+    # グリッド上で密度を評価
+    grid_size = 100
+    x_grid = np.linspace(0, 1, grid_size)
+    y_grid = np.linspace(0, 1, grid_size)
+    X, Y = np.meshgrid(x_grid, y_grid)
+    positions = np.vstack([X.ravel(), Y.ravel()])
+    density = kde(positions).reshape(grid_size, grid_size)
+    
+    # 勾配（密度変化が急な場所）を計算
+    gradient_mag = gaussian_gradient_magnitude(density, sigma=1)
+    
+    # 可視化 (1): 密度マップ
+    plt.figure(figsize=(12, 10))
+    plt.pcolormesh(X, Y, np.log10(density + 1e-10), cmap='cividis', shading='auto')
+    plt.colorbar(label='Log10(Density)')
+    plt.contour(X, Y, density, colors='white', alpha=0.3, levels=10, linewidths=0.5)
+    plt.xlabel('Initial Phase φy / (2π)')
+    plt.ylabel('Initial Phase φz / (2π)')
+    plt.title('Kernel Density Estimation of Recrossing Trajectories')
+    plt.gca().set_aspect('equal')
+    plt.tight_layout()
+    plt.savefig(os.path.join(data_folder, 'nhim_kde_density.pdf'))
+    plt.close()
+    
+    # 可視化 (2): 勾配（構造の境界）
+    plt.figure(figsize=(12, 10))
+    plt.pcolormesh(X, Y, gradient_mag, cmap='plasma', shading='auto')
+    plt.colorbar(label='Density Gradient Magnitude')
+    plt.contour(X, Y, gradient_mag, colors='white', alpha=0.3, levels=5, linewidths=0.5)
+    plt.xlabel('Initial Phase φy / (2π)')
+    plt.ylabel('Initial Phase φz / (2π)')
+    plt.title('Structural Boundaries in NHIM (Density Gradients)')
+    plt.gca().set_aspect('equal')
+    plt.tight_layout()
+    plt.savefig(os.path.join(data_folder, 'nhim_structure_boundaries.pdf'))
+    plt.close()
+    
+
+def create_ensemble_visualization(phi_y, phi_z, recross_times):
+    """複数の可視化手法を組み合わせた高度な可視化"""
+    # デュアルプロット: 散布図と等高線の組み合わせ
+    from scipy.interpolate import griddata
+    
+    # グリッドデータの作成（補間）
+    grid_size = 100
+    xi = np.linspace(0, 1, grid_size)
+    yi = np.linspace(0, 1, grid_size)
+    zi = griddata((phi_y, phi_z), np.log10(recross_times), (xi[None,:], yi[:,None]), method='cubic')
+    
+    # シャープな構造を強調するためのフィルタリング
+    # (オプション) シャープネスフィルター
+    from scipy.ndimage import gaussian_filter
+    zi_smooth = gaussian_filter(zi, sigma=1)
+    zi_sharp = zi + 2.0 * (zi - zi_smooth)
+    
+    plt.figure(figsize=(14, 12))
+    
+    # 左: 補間された連続的なカラーマップ
+    plt.subplot(121, aspect='equal')
+    plt.pcolormesh(xi, yi, zi_sharp, cmap='cividis', shading='auto')
+    plt.colorbar(label='Log10(Recrossing Time)')
+    plt.contour(xi, yi, zi_sharp, colors='white', alpha=0.3, levels=10, linewidths=0.5)
+    plt.xlim(0, 1)
+    plt.ylim(0, 1)
+    plt.title('Enhanced Structure Visualization\n(Sharpened Interpolation)')
+    plt.xlabel('Initial Phase φy / (2π)')
+    plt.ylabel('Initial Phase φz / (2π)')
+    plt.grid(False)
+    
+    # 右: 生データとエッジ強調の組み合わせ
+    plt.subplot(122, aspect='equal')
+    # エッジ検出のための勾配計算
+    gradient_y, gradient_x = np.gradient(zi_sharp)
+    gradient_mag = np.sqrt(gradient_x**2 + gradient_y**2)
+    
+    # 散布図とエッジを重ねる
+    plt.scatter(phi_y, phi_z, c=np.log10(recross_times), 
+               cmap='cividis', s=15, alpha=0.6, edgecolors='w', linewidths=0.1)
+    plt.contour(xi, yi, gradient_mag, colors='red', alpha=0.5, levels=5, linewidths=1.0)
+    plt.colorbar(label='Log10(Recrossing Time)')
+    plt.xlim(0, 1)
+    plt.ylim(0, 1)
+    plt.title('Structural Boundaries Detection\n(Raw Data + Edge Detection)')
+    plt.xlabel('Initial Phase φy / (2π)')
+    plt.ylabel('Initial Phase φz / (2π)')
+    plt.grid(True, linestyle=':', alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(data_folder, 'nhim_enhanced_structure.pdf'))
+    plt.close()
+
+
 # --- メイン実行ブロック ---
 if __name__ == "__main__":
     start_time_main = time.time()
@@ -458,5 +648,37 @@ if __name__ == "__main__":
         plt.savefig(os.path.join(data_folder, filename_hist))
         plt.close()
         print(f"  NHIM phase density plot saved to '{os.path.join(data_folder, filename_hist)}'")
+
+    # --- 6. 微妙な構造の抽出と可視化 ---
+    if n_recrossed > 100:  # 十分なデータがある場合のみ実行
+        print("Extracting and visualizing subtle structures in NHIM...")
+        
+        # t-SNEによる非線形次元削減
+        try:
+            extract_nhim_structure_with_tsne(phi_y_recrossed, phi_z_recrossed, recrossed_times_only)
+            print("  t-SNE visualization completed")
+        except ImportError:
+            print("  Warning: sklearn not available, skipping t-SNE visualization")
+        
+        # クラスタリング分析
+        try:
+            extract_clusters_on_nhim(phi_y_recrossed, phi_z_recrossed, recrossed_times_only)
+            print("  Clustering analysis completed")
+        except ImportError:
+            print("  Warning: sklearn not available, skipping clustering analysis")
+        
+        # 時間スライスによる分析
+        analyze_time_slices(phi_y_recrossed, phi_z_recrossed, recrossed_times_only)
+        print("  Time slice analysis completed")
+        
+        # 密度と勾配の可視化
+        visualize_density_and_gradients(phi_y_recrossed, phi_z_recrossed, recrossed_times_only)
+        print("  Density and gradient visualization completed")
+        
+        # 高度なアンサンブル可視化
+        create_ensemble_visualization(phi_y_recrossed, phi_z_recrossed, recrossed_times_only)
+        print("  Enhanced structure visualization completed")
+        
+        print("All structure extraction and visualization completed")
 
     print("\nAll processing finished.")
