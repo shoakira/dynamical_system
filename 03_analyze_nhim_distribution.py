@@ -269,70 +269,122 @@ def analyze_region_in_detail(phi_y_region, phi_z_region, times_region, config, p
 
 
 def plot_time_slices(phi_y, phi_z, recross_times, n_slices, config, plot_folder_):
-    """Visualizes phase distribution across slices of recrossing time."""
-    if phi_y is None or n_slices <= 0: return
+    """Visualizes phase distribution across slices of recrossing time using log10 steps of 1.0."""
+    if phi_y is None: return
 
     log_times = np.log10(recross_times)
     n_recrossed = len(recross_times)
     energy = config['E']; gamma_ = config['GAMMA']
 
-    print(f"\nGenerating time slice plots ({n_slices} slices)...")
+    print(f"\nGenerating log10 time slice plots with step=1.0...")
     try:
-        # Use quantiles for slice edges
-        slice_edges = np.percentile(log_times, np.linspace(0, 100, n_slices + 1))
-        # Ensure unique edges, especially if many times are identical
-        slice_edges = np.unique(slice_edges)
-        actual_n_slices = len(slice_edges) - 1
-        if actual_n_slices < 1:
-             print("  Warning: Could not create unique time slices. Skipping plot.")
-             return
-
-        ncols = 3 # Adjust layout
-        nrows = (actual_n_slices + ncols - 1) // ncols
-        fig_w = 18; fig_h = max(6, nrows * 5)
-
-        fig, axs = plt.subplots(nrows, ncols, figsize=(fig_w, fig_h), sharex=True, sharey=True)
-        axs = axs.ravel()
+        # log10(T)=1.0から始まるスライスエッジを生成（実時間T=10から開始）
+        first_edge = 1.0  # 固定値: log10(T)=1 (T=10.0)
+        max_log_t = np.max(log_times)
+        last_edge = np.ceil(max_log_t)
+        
+        # log10で1.0刻みのスライスエッジを生成
+        slice_edges = np.arange(first_edge, last_edge + 1)
+        
+        # 固定レイアウト: 2行3列
+        nrows, ncols = 2, 3
+        max_plots = nrows * ncols  # 6プロット
+        
+        # スライス数を制限
+        actual_n_slices = min(len(slice_edges) - 1, max_plots - 1)  # 1つは残りのデータ用に残す
+        
+        fig, axs = plt.subplots(nrows, ncols, figsize=(18, 12), sharex=True, sharey=True)
+        axs = axs.flatten()
 
         for i in range(actual_n_slices):
-            # Handle edge cases for the last bin
-            if i < actual_n_slices - 1:
-                mask = (log_times >= slice_edges[i]) & (log_times < slice_edges[i+1])
-            else:
-                mask = (log_times >= slice_edges[i]) & (log_times <= slice_edges[i+1]) # Include max value
-
+            mask = (log_times >= slice_edges[i]) & (log_times < slice_edges[i+1])
             n_slice_pts = np.sum(mask)
 
             ax = axs[i]
             if n_slice_pts > 0:
-                # Use a consistent color, or color by another variable if desired
                 ax.scatter(phi_y[mask], phi_z[mask], c='darkblue', s=15, alpha=0.7)
-            title = (f'log10(T) ~ [{slice_edges[i]:.2f}, {slice_edges[i+1]:.2f}]\n'
-                     f'({n_slice_pts} pts)')
+                
+                # 密度プロット（ポイントが多い場合）
+                if n_slice_pts > 100:
+                    try:
+                        x_bins = y_bins = 20
+                        hist, xedges, yedges = np.histogram2d(
+                            phi_y[mask], phi_z[mask], bins=[x_bins, y_bins], range=[[0, 1], [0, 1]]
+                        )
+                        # 対数スケールで密度を表示
+                        with np.errstate(divide='ignore', invalid='ignore'):
+                            log_hist = np.log10(hist, where=hist>0)
+                        ax.pcolormesh(xedges, yedges, log_hist.T, 
+                                    cmap='Blues', alpha=0.5, shading='auto')
+                    except Exception as e:
+                        pass
+                    
+            # 10のべき乗の表記
+            time_min = 10**slice_edges[i]
+            time_max = 10**slice_edges[i+1]
+            title = (f'T ∈ [{time_min:.1e}, {time_max:.1e}]\n'
+                    f'log10(T) ∈ [{slice_edges[i]:.1f}, {slice_edges[i+1]:.1f}]\n'
+                    f'({n_slice_pts} pts)')
+            
             ax.set_title(title, fontsize=10)
-            ax.set_xlim(0, 1); ax.set_ylim(0, 1); ax.grid(True, ls=':', alpha=0.5); ax.set_aspect('equal')
-            if i // ncols == nrows - 1 or i >= actual_n_slices - ncols : # Bottom row
+            ax.set_xlim(0, 1); ax.set_ylim(0, 1)
+            ax.grid(True, ls=':', alpha=0.5)
+            ax.set_aspect('equal')
+            
+            # 軸ラベル
+            if i >= ncols * (nrows - 1):  # 最下行
                 ax.set_xlabel('φy / (2π)', fontsize=10)
-            if i % ncols == 0: # Leftmost column
+            if i % ncols == 0:  # 一番左の列
                 ax.set_ylabel('φz / (2π)', fontsize=10)
             ax.tick_params(axis='both', which='major', labelsize=9)
+        
+        # 最後のプロットに残りのデータを表示
+        mask_remaining = log_times >= slice_edges[actual_n_slices]
+        n_remaining = np.sum(mask_remaining)
+        
+        ax = axs[actual_n_slices]
+        if n_remaining > 0:
+            ax.scatter(phi_y[mask_remaining], phi_z[mask_remaining], c='darkred', s=15, alpha=0.7)
+            
+            # 残りのデータの最大値を表示
+            time_min = 10**slice_edges[actual_n_slices]
+            time_max = 10**max_log_t
+            title = (f'T ∈ [{time_min:.1e}, {time_max:.1e}]\n'
+                    f'log10(T) ∈ [{slice_edges[actual_n_slices]:.1f}, {max_log_t:.1f}]\n'
+                    f'({n_remaining} pts)')
+            
+            ax.set_title(title, fontsize=10)
+            if actual_n_slices >= ncols * (nrows - 1):
+                ax.set_xlabel('φy / (2π)', fontsize=10)
+            if actual_n_slices % ncols == 0:
+                ax.set_ylabel('φz / (2π)', fontsize=10)
+        else:
+            ax.set_title("No remaining points", fontsize=10)
+            
+        ax.set_xlim(0, 1); ax.set_ylim(0, 1)
+        ax.grid(True, ls=':', alpha=0.5)
+        ax.set_aspect('equal')
+        ax.tick_params(axis='both', which='major', labelsize=9)
 
-        # Hide unused subplots
-        for j in range(actual_n_slices, len(axs)):
+        # 使用していないサブプロットを非表示に
+        for j in range(actual_n_slices + 1, max_plots):
             axs[j].set_visible(False)
 
-        plt.suptitle("Phase Distribution across Recrossing Time Slices (Quantiles)", fontsize=16)
+        plt.suptitle(f"Phase Distribution by log10(Recrossing Time) Intervals\nE={energy:.3f}, γ={gamma_}", fontsize=16)
         plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-        filename = f"nhim_time_slices_quantile_E{energy:.3f}_gamma{gamma_}.pdf"
+        
+        filename = f"nhim_time_slices_log10_E{energy:.3f}_gamma{gamma_}.pdf"
         filepath = os.path.join(plot_folder_, filename)
-        plt.savefig(filepath); plt.close(fig)
-        print(f"  Time slice plots (Quantiles) saved to '{filepath}'")
+        plt.savefig(filepath)
+        plt.close(fig)
+        
+        print(f"  Time slice plots (log10 steps) saved to '{filepath}'")
     except Exception as e:
-         print(f"  Error during Time Slice plots: {e}")
+        print(f"  Error during log10 time slice plots: {e}")
 
 
 def run_advanced_analysis(phi_y, phi_z, recross_times, config, plot_folder_, n_time_slices_):
-    """Runs optional advanced analysis methods (t-SNE, Clustering, Time Slices)."""
+    """Runs optional advanced analysis methods (t-SNE, Clustering)."""
     n_recrossed = len(recross_times)
     if n_recrossed < 50: # Reduced threshold slightly
         print("\nSkipping advanced analysis (requires >50 recrossing points).")
@@ -377,9 +429,6 @@ def run_advanced_analysis(phi_y, phi_z, recross_times, config, plot_folder_, n_t
             if n_pts_cluster > 0: print(f"    Cluster {i} ({n_pts_cluster} pts): Mean log10(T)={np.mean(log_times[mask]):.2f}")
     except Exception as e: print(f"  Error during K-Means: {e}")
 
-    # 3. Time Slice Visualization (Now called from here)
-    plot_time_slices(phi_y, phi_z, recross_times, n_time_slices_, config, plot_folder_)
-
 
 # ==============================================================================
 # Main Execution Block
@@ -407,26 +456,30 @@ def main():
         focus_reg=FOCUS_REGION, region_py=REGION_PHI_Y, region_pz=REGION_PHI_Z, margin=REGION_MARGIN
     )
 
-    # 6. Optional Advanced Analysis (includes time slices)
-    if ADVANCED_ANALYSIS:
-        run_advanced_analysis(phi_y_rec, phi_z_rec, times_rec_only, config, PLOT_FOLDER, N_TIME_SLICES)
-    elif N_TIME_SLICES > 0: # Run time slices even if sklearn is not available
-         print("\nGenerating time slice plots (advanced analysis disabled)...")
-         plot_time_slices(phi_y_rec, phi_z_rec, times_rec_only, N_TIME_SLICES, config, PLOT_FOLDER)
-
     # 4. Zoomed Phase Distribution Plot
     region_mask = visualize_phase_distribution_with_zoom(
         phi_y_rec, phi_z_rec, times_rec_only, config, PLOT_FOLDER,
         focus_reg=FOCUS_REGION, region_py=REGION_PHI_Y, region_pz=REGION_PHI_Z, margin=REGION_MARGIN
     )
 
-    # 5. Detailed Analysis of Focused Region
+    #5. Detailed Analysis of Focused Region
     if FOCUS_REGION and region_mask is not None and np.sum(region_mask) > 0:
         analyze_region_in_detail(
             phi_y_rec[region_mask], phi_z_rec[region_mask], times_rec_only[region_mask],
             config, PLOT_FOLDER
         )
 
+    # 5. 時間スライス可視化（独立して呼び出し）
+    if N_TIME_SLICES > 0:
+        print("\nGenerating time slice plots...")
+        plot_time_slices(phi_y_rec, phi_z_rec, times_rec_only, N_TIME_SLICES, config, PLOT_FOLDER)
+
+    # 6. Optional Advanced Analysis (includes time slices)
+    #if ADVANCED_ANALYSIS:
+    #    run_advanced_analysis(phi_y_rec, phi_z_rec, times_rec_only, config, PLOT_FOLDER, N_TIME_SLICES)
+    #elif N_TIME_SLICES > 0: # Run time slices even if sklearn is not available
+    #     print("\nGenerating time slice plots (advanced analysis disabled)...")
+    #     plot_time_slices(phi_y_rec, phi_z_rec, times_rec_only, N_TIME_SLICES, config, PLOT_FOLDER)
 
     print(f"\nNHIM distribution analysis finished in {time.time() - start_time:.2f} seconds.")
 
