@@ -141,10 +141,11 @@ def integrate_trajectory_recross(state0, t_max_, dt_, gamma_):
     return state, t_recross
 
 # --- 初期条件生成 (近似NHIMサンプリング) ---
-def generate_initial_conditions(n_samples, energy, gamma_, px_fixed=None):
+def generate_initial_conditions(n_samples, energy, gamma_, px_fixed=None, 
+                                focus_region=False, region_phi_y=None, region_phi_z=None):
     """
     x=0 上の近似NHIMからエネルギーEを持つ初期条件を一様ランダムに生成
-    戻り値: initial_conditions (list of states), params (list of dicts for analysis)
+    指定された位相領域に焦点を当てることも可能
     """
     initial_conditions = []
     params_list = []
@@ -152,7 +153,14 @@ def generate_initial_conditions(n_samples, energy, gamma_, px_fixed=None):
     attempts = 0
     max_attempts = n_samples * 100 # 失敗しすぎたら諦める
 
-    print(f"Generating {n_samples} initial conditions on approximate NHIM (E={energy})...")
+    # 領域に焦点を当てる場合のメッセージ
+    if focus_region and region_phi_y and region_phi_z:
+        phi_y_range = f"{region_phi_y[0]:.2f}-{region_phi_y[1]:.2f}"
+        phi_z_range = f"{region_phi_z[0]:.2f}-{region_phi_z[1]:.2f}"
+        print(f"Generating {n_samples} initial conditions on NHIM (E={energy})")
+        print(f"Focusing on region: φy/(2π)={phi_y_range}, φz/(2π)={phi_z_range}")
+    else:
+        print(f"Generating {n_samples} initial conditions on NHIM (E={energy})...")
 
     while generated_count < n_samples and attempts < max_attempts:
         attempts += 1
@@ -170,79 +178,65 @@ def generate_initial_conditions(n_samples, energy, gamma_, px_fixed=None):
             kinetic_center_target = -1 # 仮の値
 
         # 2. y-z 平面内のエネルギーを E_y と E_z にランダムに分配
-        #    H_y + H_z = E_yz_target = E - V(0,y,z) - 0.5*px^2
-        #    近似: V(0,y,z) ≈ 1 + 0.5*(y^2+z^2) を使う
-        #    => H_y + H_z ≈ E - 1 - 0.5*px^2 = E_center
-        #    E_center は y,z 方向の振動エネルギーの上限に対応
         if px_fixed is not None:
             e_center_approx = energy - potential_at_saddle - 0.5 * px0**2
         else:
-            # pxが決まってないので、E_centerの正確な値は不明
-            # とりあえずエネルギーの上限として E-1 を使う (px=0の場合)
             e_center_approx = energy - potential_at_saddle
-            if e_center_approx < 0: # エネルギーが低すぎる
+            if e_center_approx < 0:
                 if attempts % 1000 == 0: print("Warning: E_center_approx < 0")
                 continue
 
-
-        # E_y を [0, E_center] から一様ランダムに選ぶ (Action変数に比例)
+        # E_y を [0, E_center] から一様ランダムに選ぶ
         e_y = np.random.uniform(0, e_center_approx)
-        e_z = e_center_approx - e_y # 残りを E_z に (これは近似)
-        if e_z < 0: # 分配がうまくいかなかった場合 (近似のため起こりうる)
+        e_z = e_center_approx - e_y
+        if e_z < 0:
              e_z = 0
-             e_y = e_center_approx # E_y が全エネルギーを持つ
-
+             e_y = e_center_approx
 
         # 3. 各振動子の位相 phi_y, phi_z をランダムに選ぶ
-        phi_y = np.random.uniform(0, 2 * np.pi)
-        phi_z = np.random.uniform(0, 2 * np.pi)
+        if focus_region and region_phi_y and region_phi_z:
+            # 指定された範囲内でランダムに位相を選択
+            norm_phi_y = np.random.uniform(region_phi_y[0], region_phi_y[1])
+            norm_phi_z = np.random.uniform(region_phi_z[0], region_phi_z[1])
+            phi_y = norm_phi_y * 2 * np.pi
+            phi_z = norm_phi_z * 2 * np.pi
+        else:
+            # 全領域からランダムに選択
+            phi_y = np.random.uniform(0, 2 * np.pi)
+            phi_z = np.random.uniform(0, 2 * np.pi)
 
-        # 4. (y, py) と (z, pz) を計算 (Action-Angle 変数から)
-        #    H = 0.5*p^2 + 0.5*omega^2*q^2 = E_osc
-        #    q = sqrt(2*E_osc / omega^2) * cos(phi)
-        #    p = -sqrt(2*E_osc) * sin(phi) * omega (間違いやすい！)
-        #    p = -sqrt(2*E_osc*omega^2) * sin(phi)
-        #    => p = -omega * sqrt(2*E_osc) * sin(phi)
-        #    omega=1 の場合: q = sqrt(2*E_osc)*cos(phi), p = -sqrt(2*E_osc)*sin(phi)
+        # 4. (y, py) と (z, pz) を計算
         y0 = np.sqrt(2 * e_y / omega_y**2) * np.cos(phi_y) if omega_y > 0 else 0
-        py0 = -omega_y * np.sqrt(2 * e_y) * np.sin(phi_y) if omega_y > 0 else 0 # omega掛けるの忘れない
-        #py0 = -np.sqrt(2 * e_y) * np.sin(phi_y) * omega_y # omega=1なので同じ
+        py0 = -omega_y * np.sqrt(2 * e_y) * np.sin(phi_y) if omega_y > 0 else 0
 
         z0 = np.sqrt(2 * e_z / omega_z**2) * np.cos(phi_z) if omega_z > 0 else 0
-        pz0 = -omega_z * np.sqrt(2 * e_z) * np.sin(phi_z) if omega_z > 0 else 0 # omega掛けるの忘れない
-        #pz0 = -np.sqrt(2 * e_z) * np.sin(phi_z) * omega_z # omega=1なので同じ
+        pz0 = -omega_z * np.sqrt(2 * e_z) * np.sin(phi_z) if omega_z > 0 else 0
 
-
-        # 5. px をエネルギー保存から決定 (px_fixed is None の場合)
+        # 5. px をエネルギー保存から決定
         if px_fixed is None:
             potential_yz = V(x0, y0, z0, gamma_)
             kinetic_yz = 0.5 * (py0**2 + pz0**2)
             px_squared_needed = 2 * (energy - potential_yz - kinetic_yz)
 
-            # 修正: 数値誤差による小さな負の値は許容して0に設定
+            # 数値誤差による小さな負の値は許容
             if px_squared_needed < 0:
-                if px_squared_needed < -1e-8:  # 真に問題がある場合は警告
-                    if attempts % 100000 == 0:  # 警告表示頻度を大幅に下げる
+                if px_squared_needed < -1e-8:
+                    if attempts % 100000 == 0:
                         print(f"Warning: px^2 significantly negative ({px_squared_needed:.2e})")
-                    continue  # このサンプルは棄却
+                    continue
                 else:
-                    # 許容できる数値誤差の場合はゼロに設定して続行
                     px_squared_needed = 0.0
             
             # 非常に小さい正の値もチェック
             if px_squared_needed < 1e-10:
-                px0 = 1e-5  # 最小の正の値を設定
+                px0 = 1e-5
             else:
-                px0 = np.sqrt(px_squared_needed)  # 正の値を取る
+                px0 = np.sqrt(px_squared_needed)
         else:
-            # px_fixed を使う場合は、エネルギーが合うかチェック (近似のためずれる可能性)
-             current_H = 0.5 * (px0**2 + py0**2 + pz0**2) + V(x0, y0, z0, gamma_)
-             if abs(current_H - energy) > 1e-6: # 許容誤差
-                 # print(f"Warning: Energy mismatch {abs(current_H - energy):.2e}")
-                 # エネルギーを再調整するか、棄却するか
-                 # ここでは棄却
-                 continue
-
+            # エネルギーが合うかチェック
+            current_H = 0.5 * (px0**2 + py0**2 + pz0**2) + V(x0, y0, z0, gamma_)
+            if abs(current_H - energy) > 1e-6:
+                continue
 
         # 状態ベクトルを作成
         state0 = np.array([x0, y0, z0, px0, py0, pz0])
@@ -251,7 +245,7 @@ def generate_initial_conditions(n_samples, energy, gamma_, px_fixed=None):
         final_H = hamiltonian(state0, gamma_)
         if abs(final_H - energy) > 1e-7:
             print(f"Fatal Warning: Final energy mismatch! H={final_H:.8f}, E={energy:.8f}")
-            continue # 棄却
+            continue
 
         initial_conditions.append(state0)
         # 解析用にパラメータを保存
@@ -337,7 +331,7 @@ def extract_clusters_on_nhim(phi_y, phi_z, recross_times):
         mask = (clusters == i)
         print(f"Cluster {i}: {np.sum(mask)} points")
         print(f"  Mean recrossing time: {10**np.mean(np.log10(recross_times[mask])):.2e}")
-        print(f"  Min/Max recrossing time: {np.min(recross_times[mask])::.2e}/{np.max(recross_times[mask])::.2e}")
+        print(f"  Min/Max recrossing time: {np.min(recross_times[mask]):.2e}/{np.max(recross_times[mask]):.2e}")
         
         
 def analyze_time_slices(phi_y, phi_z, recross_times):
@@ -370,19 +364,38 @@ def analyze_time_slices(phi_y, phi_z, recross_times):
     plt.close()
 
 
-def visualize_density_and_gradients(phi_y, phi_z, recross_times):
+# visualize_density_and_gradients関数内の修正
+def visualize_density_and_gradients(phi_y, phi_z, recross_times, 
+                                    focus_region=False, region_phi_y=None, 
+                                    region_phi_z=None, margin=0.05):
     """カーネル密度推定と勾配を用いた詳細構造の可視化"""
     from scipy.stats import gaussian_kde
     from scipy.ndimage import gaussian_gradient_magnitude
     
-    # カーネル密度推定で滑らかな分布を作成
-    xy = np.vstack([phi_y, phi_z])
-    kde = gaussian_kde(xy, bw_method=0.05)  # バンド幅は調整可能
+    # グリッド範囲を設定
+    if focus_region and region_phi_y and region_phi_z:
+        x_min, x_max = region_phi_y[0], region_phi_y[1]
+        y_min, y_max = region_phi_z[0], region_phi_z[1]
+        region_info = f" (Region: φy={x_min:.2f}-{x_max:.2f}, φz={y_min:.2f}-{y_max:.2f})"
+        
+        # 表示範囲（余白付き）
+        display_xlim = (max(0, x_min - margin), min(1, x_max + margin))
+        display_ylim = (max(0, y_min - margin), min(1, y_max + margin))
+    else:
+        x_min, x_max = 0, 1
+        y_min, y_max = 0, 1
+        region_info = ""
+        display_xlim = (0, 1)
+        display_ylim = (0, 1)
     
-    # グリッド上で密度を評価
+    # カーネル密度推定
+    xy = np.vstack([phi_y, phi_z])
+    kde = gaussian_kde(xy, bw_method=0.05)
+    
+    # グリッド上で密度を評価（領域に合わせる）
     grid_size = 100
-    x_grid = np.linspace(0, 1, grid_size)
-    y_grid = np.linspace(0, 1, grid_size)
+    x_grid = np.linspace(x_min, x_max, grid_size)
+    y_grid = np.linspace(y_min, y_max, grid_size)
     X, Y = np.meshgrid(x_grid, y_grid)
     positions = np.vstack([X.ravel(), Y.ravel()])
     density = kde(positions).reshape(grid_size, grid_size)
@@ -397,9 +410,11 @@ def visualize_density_and_gradients(phi_y, phi_z, recross_times):
     plt.contour(X, Y, density, colors='white', alpha=0.3, levels=10, linewidths=0.5)
     plt.xlabel('Initial Phase φy / (2π)')
     plt.ylabel('Initial Phase φz / (2π)')
-    plt.title('Kernel Density Estimation of Recrossing Trajectories')
+    plt.title(f'Kernel Density Estimation of Recrossing Trajectories{region_info}')
     plt.gca().set_aspect('equal')
     plt.tight_layout()
+    plt.xlim(display_xlim)
+    plt.ylim(display_ylim)
     plt.savefig(os.path.join(data_folder, 'nhim_kde_density.pdf'))
     plt.close()
     
@@ -413,6 +428,8 @@ def visualize_density_and_gradients(phi_y, phi_z, recross_times):
     plt.title('Structural Boundaries in NHIM (Density Gradients)')
     plt.gca().set_aspect('equal')
     plt.tight_layout()
+    plt.xlim(display_xlim)
+    plt.ylim(display_ylim)
     plt.savefig(os.path.join(data_folder, 'nhim_structure_boundaries.pdf'))
     plt.close()
     
@@ -470,56 +487,6 @@ def create_ensemble_visualization(phi_y, phi_z, recross_times):
     plt.savefig(os.path.join(data_folder, 'nhim_enhanced_structure.pdf'))
     plt.close()
 
-
-def generate_initial_conditions(n_samples, energy, gamma_, px_fixed=None, 
-                                focus_region=False, region_phi_y=None, region_phi_z=None):
-    """
-    x=0 上の近似NHIMからエネルギーEを持つ初期条件を一様ランダムに生成
-    指定された位相領域に焦点を当てることも可能
-    
-    Parameters:
-    -----------
-    focus_region : bool
-        特定の位相領域に集中するかどうか
-    region_phi_y : tuple
-        φy/(2π)の範囲 (min, max)
-    region_phi_z : tuple
-        φz/(2π)の範囲 (min, max)
-    """
-    initial_conditions = []
-    params_list = []
-    generated_count = 0
-    attempts = 0
-    max_attempts = n_samples * 100 # 失敗しすぎたら諦める
-
-    # 領域に焦点を当てる場合のメッセージ
-    if focus_region and region_phi_y and region_phi_z:
-        phi_y_range = f"{region_phi_y[0]:.2f}-{region_phi_y[1]:.2f}"
-        phi_z_range = f"{region_phi_z[0]:.2f}-{region_phi_z[1]:.2f}"
-        print(f"Generating {n_samples} initial conditions on NHIM (E={energy})")
-        print(f"Focusing on region: φy/(2π)={phi_y_range}, φz/(2π)={phi_z_range}")
-    else:
-        print(f"Generating {n_samples} initial conditions on NHIM (E={energy})")
-
-    while generated_count < n_samples and attempts < max_attempts:
-        attempts += 1
-
-        # ... 既存のコード（省略） ...
-
-        # 3. 各振動子の位相 phi_y, phi_z をランダムに選ぶ
-        if focus_region and region_phi_y and region_phi_z:
-            # 指定された範囲内でランダムに位相を選択
-            norm_phi_y = np.random.uniform(region_phi_y[0], region_phi_y[1])
-            norm_phi_z = np.random.uniform(region_phi_z[0], region_phi_z[1])
-            phi_y = norm_phi_y * 2 * np.pi
-            phi_z = norm_phi_z * 2 * np.pi
-        else:
-            # 全領域からランダムに選択（既存の方法）
-            phi_y = np.random.uniform(0, 2 * np.pi)
-            phi_z = np.random.uniform(0, 2 * np.pi)
-
-        # ... 残りの既存コード（省略） ...
-        
 
 def visualize_phase_distribution_with_zoom(phi_y, phi_z, recross_times, 
                                            focus_region=False, region_phi_y=None, 
@@ -583,7 +550,7 @@ def visualize_phase_distribution_with_zoom(phi_y, phi_z, recross_times,
             
             # 領域情報をタイトルに含める
             region_title = f"φy=({region_phi_y[0]:.2f}-{region_phi_y[1]:.2f}), φz=({region_phi_z[0]:.2f}-{region_phi_z[1]:.2f})"
-            axs[1].setTitle(f"Zoomed Region: {region_title}", fontsize=14)
+            axs[1].set_title(f"Zoomed Region: {region_title}", fontsize=14)
             
             axs[1].grid(True, linestyle=':', alpha=0.6)
             axs[1].set_aspect('equal')
@@ -823,31 +790,43 @@ if __name__ == "__main__":
         phi_z_recrossed = np.array([p['phi_z'] for p in recrossed_params]) / (2 * np.pi) # 正規化
         times_log_recrossed = np.log10(recrossed_times_only)
 
-        # 色覚多様性に配慮したプロットを複数作成
+        # 色覚多様性に配慮したプロットのセクション内の修正（約730行目付近）
         for cmap_name, cmap_label in [
-            ('cividis', 'CVD-friendly'),  # 色覚多様性に特化したカラーマップ
-            ('plasma', 'Blue-Yellow'),     # 青-黄色のグラデーション
-            ('inferno', 'Dark-Yellow'),    # 暗い色から黄色へのグラデーション
+            ('cividis', 'CVD-friendly'),
+            ('plasma', 'Blue-Yellow'),    
+            ('inferno', 'Dark-Yellow'),   
         ]:
             plt.figure(figsize=(10, 8))
             
-            # 散布図のプロット - マーカーサイズを大きくし、エッジを追加
+            # 散布図のプロット
             scatter = plt.scatter(
                 phi_y_recrossed, phi_z_recrossed,
                 c=times_log_recrossed,
                 cmap=cmap_name,
-                s=25,  # マーカーサイズを大きく
+                s=25,
                 alpha=0.8,
-                edgecolors='w',  # 白い輪郭線を追加
-                linewidths=0.2   # 輪郭線を薄く
+                edgecolors='w',
+                linewidths=0.2
             )
+
+            # 表示範囲を初期条件領域に適合させる（focus_regionがTrueの場合）
+            if focus_region and region_phi_y and region_phi_z:
+                # 余白を追加
+                xlim = (max(0, region_phi_y[0] - region_margin), min(1, region_phi_y[1] + region_margin))
+                ylim = (max(0, region_phi_z[0] - region_margin), min(1, region_phi_z[1] + region_margin))
+                plt.xlim(xlim)
+                plt.ylim(ylim)
+                region_info = f" (Region: φy={region_phi_y[0]:.2f}-{region_phi_y[1]:.2f}, φz={region_phi_z[0]:.2f}-{region_phi_z[1]:.2f})"
+            else:
+                # 全領域表示
+                plt.xlim(0, 1)
+                plt.ylim(0, 1)
+                region_info = ""
 
             plt.xlabel("Initial Phase φy / (2π)", fontsize=12)
             plt.ylabel("Initial Phase φz / (2π)", fontsize=12)
-            plt.title(f"Initial Phase on NHIM vs. Recrossing Time ({cmap_label})\nE={E:.3f}, γ={gamma}, N={n_recrossed}", 
+            plt.title(f"Initial Phase on NHIM vs. Recrossing Time ({cmap_label})\nE={E:.3f}, γ={gamma}, N={n_recrossed}{region_info}", 
                       fontsize=14)
-            plt.xlim(0, 1)
-            plt.ylim(0, 1)
             plt.grid(True, linestyle=':', alpha=0.6)
             plt.gca().set_aspect('equal', adjustable='box') # アスペクト比を1:1に
 
@@ -867,26 +846,42 @@ if __name__ == "__main__":
         
         # 分布の特徴をより詳細に分析するための2Dヒストグラム
         plt.figure(figsize=(10, 8))
-        
+
+        # ヒストグラムの範囲を初期条件領域に合わせる
+        if focus_region and region_phi_y and region_phi_z:
+            hist_range = [[region_phi_y[0], region_phi_y[1]], [region_phi_z[0], region_phi_z[1]]]
+            region_info = f" (Region: φy={region_phi_y[0]:.2f}-{region_phi_y[1]:.2f}, φz={region_phi_z[0]:.2f}-{region_phi_z[1]:.2f})"
+            
+            # 表示範囲（余白付き）
+            display_xlim = (max(0, region_phi_y[0] - region_margin), min(1, region_phi_y[1] + region_margin))
+            display_ylim = (max(0, region_phi_z[0] - region_margin), min(1, region_phi_z[1] + region_margin))
+        else:
+            hist_range = [[0, 1], [0, 1]]
+            region_info = ""
+            display_xlim = (0, 1)
+            display_ylim = (0, 1)
+
         # 2Dヒストグラムで密度を可視化
         hist, xedges, yedges = np.histogram2d(
             phi_y_recrossed, phi_z_recrossed, 
             bins=20, 
-            range=[[0, 1], [0, 1]]
+            range=hist_range
         )
-        
+
         # 対数スケールでプロット
         plt.pcolormesh(xedges, yedges, hist.T, 
                       norm=LogNorm(vmin=1, vmax=hist.max()),
                       cmap='cividis')
-        
+
         plt.xlabel("Initial Phase φy / (2π)", fontsize=12)
         plt.ylabel("Initial Phase φz / (2π)", fontsize=12)
-        plt.title(f"Density of Recrossing Trajectories on NHIM\nE={E:.3f}, γ={gamma}, N={n_recrossed}", 
+        plt.title(f"Density of Recrossing Trajectories on NHIM\nE={E:.3f}, γ={gamma}, N={n_recrossed}{region_info}", 
                   fontsize=14)
         plt.grid(True, linestyle=':', alpha=0.3)
         plt.colorbar(label="Count (log scale)")
         plt.gca().set_aspect('equal', adjustable='box')
+        plt.xlim(display_xlim)
+        plt.ylim(display_ylim)
         
         filename_hist = f"nhim_phase_density_3dof_E{E:.3f}_gamma{gamma}.pdf"
         plt.savefig(os.path.join(data_folder, filename_hist))
@@ -929,7 +924,13 @@ if __name__ == "__main__":
         print("  Time slice analysis completed")
         
         # 密度と勾配の可視化
-        visualize_density_and_gradients(phi_y_recrossed, phi_z_recrossed, recrossed_times_only)
+        visualize_density_and_gradients(
+            phi_y_recrossed, phi_z_recrossed, recrossed_times_only,
+            focus_region=focus_region,
+            region_phi_y=region_phi_y,
+            region_phi_z=region_phi_z,
+            margin=region_margin
+        )
         print("  Density and gradient visualization completed")
         
         # 高度なアンサンブル可視化
