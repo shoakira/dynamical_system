@@ -37,6 +37,12 @@ omega_z = 1.0         # z方向の振動数 (サドル点での線形化) -> 簡
 px_init_val = 1e-5    # 初期pxの微小正値 (エネルギー決定に使う場合はNone)
 use_fixed_px = False   # pxを固定するか、エネルギーから決定するか
 
+# NHIM上の分析領域指定
+focus_region = True  # 特定領域に焦点を当てるか
+region_phi_y = (0.4, 0.6)  # φy/(2π)の範囲 (0.0～1.0)
+region_phi_z = (0.4, 0.6)  # φz/(2π)の範囲 (0.0～1.0)
+region_margin = 0.05  # 分析時に表示する余白
+
 # --- Numba 高速化関数 ---
 @nb.njit
 def V(x, y, z, gamma_):
@@ -331,7 +337,7 @@ def extract_clusters_on_nhim(phi_y, phi_z, recross_times):
         mask = (clusters == i)
         print(f"Cluster {i}: {np.sum(mask)} points")
         print(f"  Mean recrossing time: {10**np.mean(np.log10(recross_times[mask])):.2e}")
-        print(f"  Min/Max recrossing time: {np.min(recross_times[mask]):.2e}/{np.max(recross_times[mask]):.2e}")
+        print(f"  Min/Max recrossing time: {np.min(recross_times[mask])::.2e}/{np.max(recross_times[mask])::.2e}")
         
         
 def analyze_time_slices(phi_y, phi_z, recross_times):
@@ -465,13 +471,251 @@ def create_ensemble_visualization(phi_y, phi_z, recross_times):
     plt.close()
 
 
+def generate_initial_conditions(n_samples, energy, gamma_, px_fixed=None, 
+                                focus_region=False, region_phi_y=None, region_phi_z=None):
+    """
+    x=0 上の近似NHIMからエネルギーEを持つ初期条件を一様ランダムに生成
+    指定された位相領域に焦点を当てることも可能
+    
+    Parameters:
+    -----------
+    focus_region : bool
+        特定の位相領域に集中するかどうか
+    region_phi_y : tuple
+        φy/(2π)の範囲 (min, max)
+    region_phi_z : tuple
+        φz/(2π)の範囲 (min, max)
+    """
+    initial_conditions = []
+    params_list = []
+    generated_count = 0
+    attempts = 0
+    max_attempts = n_samples * 100 # 失敗しすぎたら諦める
+
+    # 領域に焦点を当てる場合のメッセージ
+    if focus_region and region_phi_y and region_phi_z:
+        phi_y_range = f"{region_phi_y[0]:.2f}-{region_phi_y[1]:.2f}"
+        phi_z_range = f"{region_phi_z[0]:.2f}-{region_phi_z[1]:.2f}"
+        print(f"Generating {n_samples} initial conditions on NHIM (E={energy})")
+        print(f"Focusing on region: φy/(2π)={phi_y_range}, φz/(2π)={phi_z_range}")
+    else:
+        print(f"Generating {n_samples} initial conditions on NHIM (E={energy})")
+
+    while generated_count < n_samples and attempts < max_attempts:
+        attempts += 1
+
+        # ... 既存のコード（省略） ...
+
+        # 3. 各振動子の位相 phi_y, phi_z をランダムに選ぶ
+        if focus_region and region_phi_y and region_phi_z:
+            # 指定された範囲内でランダムに位相を選択
+            norm_phi_y = np.random.uniform(region_phi_y[0], region_phi_y[1])
+            norm_phi_z = np.random.uniform(region_phi_z[0], region_phi_z[1])
+            phi_y = norm_phi_y * 2 * np.pi
+            phi_z = norm_phi_z * 2 * np.pi
+        else:
+            # 全領域からランダムに選択（既存の方法）
+            phi_y = np.random.uniform(0, 2 * np.pi)
+            phi_z = np.random.uniform(0, 2 * np.pi)
+
+        # ... 残りの既存コード（省略） ...
+        
+
+def visualize_phase_distribution_with_zoom(phi_y, phi_z, recross_times, 
+                                           focus_region=False, region_phi_y=None, 
+                                           region_phi_z=None, margin=0.05):
+    """
+    NHIM上の位相分布を可視化し、指定領域にズームインした表示も生成
+    
+    Parameters:
+    -----------
+    focus_region : bool
+        特定領域にズームインするかどうか
+    region_phi_y, region_phi_z : tuple
+        ズームイン領域 (min, max)
+    margin : float
+        表示領域の余白
+    """
+    times_log = np.log10(recross_times)
+    
+    # 全体表示と領域ズームインの2つのプロットを作成
+    fig, axs = plt.subplots(1, 2, figsize=(16, 8))
+    
+    # 左側：全体表示
+    scatter1 = axs[0].scatter(phi_y, phi_z, c=times_log, 
+                              cmap='cividis', s=25, alpha=0.8, 
+                              edgecolors='w', linewidths=0.2)
+    axs[0].set_xlim(0, 1)
+    axs[0].set_ylim(0, 1)
+    axs[0].set_xlabel("Initial Phase φy / (2π)", fontsize=12)
+    axs[0].set_ylabel("Initial Phase φz / (2π)", fontsize=12)
+    axs[0].set_title("Full NHIM Phase Space", fontsize=14)
+    axs[0].grid(True, linestyle=':', alpha=0.6)
+    axs[0].set_aspect('equal')
+    
+    # 指定領域を矩形で強調表示
+    if focus_region and region_phi_y and region_phi_z:
+        rect = plt.Rectangle((region_phi_y[0], region_phi_z[0]), 
+                            region_phi_y[1] - region_phi_y[0], 
+                            region_phi_z[1] - region_phi_z[0],
+                            fill=False, edgecolor='red', linestyle='-', linewidth=2)
+        axs[0].add_patch(rect)
+    
+    # 右側：ズームイン表示
+    if focus_region and region_phi_y and region_phi_z:
+        # ズームイン領域のデータのみをフィルタリング
+        mask = ((phi_y >= region_phi_y[0]) & (phi_y <= region_phi_y[1]) & 
+                (phi_z >= region_phi_z[0]) & (phi_z <= region_phi_z[1]))
+        
+        if np.sum(mask) > 0:
+            scatter2 = axs[1].scatter(phi_y[mask], phi_z[mask], c=times_log[mask], 
+                                      cmap='cividis', s=50, alpha=0.8, 
+                                      edgecolors='w', linewidths=0.3)
+            
+            # 余白を含めた表示範囲設定
+            xlim = (max(0, region_phi_y[0] - margin), min(1, region_phi_y[1] + margin))
+            ylim = (max(0, region_phi_z[0] - margin), min(1, region_phi_z[1] + margin))
+            axs[1].set_xlim(xlim)
+            axs[1].set_ylim(ylim)
+            
+            axs[1].set_xlabel("Initial Phase φy / (2π)", fontsize=12)
+            axs[1].set_ylabel("Initial Phase φz / (2π)", fontsize=12)
+            
+            # 領域情報をタイトルに含める
+            region_title = f"φy=({region_phi_y[0]:.2f}-{region_phi_y[1]:.2f}), φz=({region_phi_z[0]:.2f}-{region_phi_z[1]:.2f})"
+            axs[1].setTitle(f"Zoomed Region: {region_title}", fontsize=14)
+            
+            axs[1].grid(True, linestyle=':', alpha=0.6)
+            axs[1].set_aspect('equal')
+            
+            # カラーバー
+            cbar = fig.colorbar(scatter2, ax=axs[1])
+            cbar.set_label("Log10(Recrossing Time)", fontsize=12)
+        else:
+            axs[1].text(0.5, 0.5, "No data in selected region", 
+                       horizontalalignment='center', verticalalignment='center',
+                       transform=axs[1].transAxes, fontsize=14)
+            axs[1].set_title("Zoomed Region (Empty)", fontsize=14)
+    else:
+        axs[1].text(0.5, 0.5, "No region selected for zoom", 
+                   horizontalalignment='center', verticalalignment='center',
+                   transform=axs[1].transAxes, fontsize=14)
+        axs[1].set_title("Zoom View (Disabled)", fontsize=14)
+    
+    # 共通カラーバー
+    cbar = fig.colorbar(scatter1, ax=axs[0])
+    cbar.set_label("Log10(Recrossing Time)", fontsize=12)
+    
+    # 全体タイトル
+    plt.suptitle(f"NHIM Phase Distribution - Recrossing Time Analysis (E={E:.3f}, γ={gamma})", fontsize=16)
+    plt.tight_layout()
+    
+    # 保存
+    filename = f"nhim_phase_zoomed_E{E:.3f}_gamma{gamma}.pdf"
+    plt.savefig(os.path.join(data_folder, filename))
+    plt.close()
+    print(f"  Zoomed phase distribution saved to '{os.path.join(data_folder, filename)}'")
+    
+    return mask  # ズーム領域内のデータマスクを返す
+
+def analyze_region_in_detail(phi_y, phi_z, recross_times, mask):
+    """
+    選択された領域の詳細分析を行う
+    
+    Parameters:
+    -----------
+    mask : ndarray
+        選択領域に該当するデータのブールマスク
+    """
+    if np.sum(mask) < 10:
+        print("  Selected region contains too few points for detailed analysis")
+        return
+    
+    # 選択領域内のデータ
+    phi_y_region = phi_y[mask]
+    phi_z_region = phi_z[mask]
+    times_region = recross_times[mask]
+    
+    print(f"  Detailed analysis of selected region ({np.sum(mask)} points):")
+    print(f"    Min recrossing time: {np.min(times_region):.2e}")
+    print(f"    Max recrossing time: {np.max(times_region):.2e}")
+    print(f"    Mean recrossing time: {np.mean(times_region):.2e}")
+    print(f"    Median recrossing time: {np.median(times_region):.2e}")
+    
+    # 高解像度の密度と勾配マップ
+    from scipy.stats import gaussian_kde
+    from scipy.ndimage import gaussian_gradient_magnitude
+    
+    # カーネル密度推定（バンド幅小さめ）
+    xy = np.vstack([phi_y_region, phi_z_region])
+    kde = gaussian_kde(xy, bw_method=0.03)  # バンド幅小さめで詳細構造を捉える
+    
+    # 高解像度グリッド
+    grid_size = 150
+    x_min, x_max = np.min(phi_y_region), np.max(phi_y_region)
+    y_min, y_max = np.min(phi_z_region), np.max(phi_z_region)
+    
+    # 範囲を少し広げる
+    margin = 0.02
+    x_min = max(0, x_min - margin)
+    x_max = min(1, x_max + margin)
+    y_min = max(0, y_min - margin)
+    y_max = min(1, y_max + margin)
+    
+    x_grid = np.linspace(x_min, x_max, grid_size)
+    y_grid = np.linspace(y_min, y_max, grid_size)
+    X, Y = np.meshgrid(x_grid, y_grid)
+    positions = np.vstack([X.ravel(), Y.ravel()])
+    
+    # 密度と勾配の計算
+    density = kde(positions).reshape(grid_size, grid_size)
+    gradient_mag = gaussian_gradient_magnitude(density, sigma=1)
+    
+    # 詳細構造可視化（散布図 + 等高線 + 密度）
+    plt.figure(figsize=(12, 10))
+    
+    # 背景に密度をヒートマップで表示
+    plt.pcolormesh(X, Y, np.log10(density + 1e-10), 
+                   cmap='viridis', alpha=0.6, shading='auto')
+    
+    # データ点をプロット
+    plt.scatter(phi_y_region, phi_z_region, c=np.log10(times_region),
+               cmap='plasma', s=40, alpha=0.8, edgecolors='w', linewidths=0.3)
+    
+    # 密度等高線を追加
+    plt.contour(X, Y, density, colors='white', alpha=0.4, levels=10, linewidths=0.5)
+    
+    # 勾配（構造境界）を赤で強調
+    plt.contour(X, Y, gradient_mag, colors='red', alpha=0.5, levels=5, linewidths=1.0)
+    
+    plt.colorbar(label='Log10(Recrossing Time)')
+    plt.xlabel("Initial Phase φy / (2π)", fontsize=12)
+    plt.ylabel("Initial Phase φz / (2π)", fontsize=12)
+    title_range = f"φy=({x_min:.2f}-{x_max:.2f}), φz=({y_min:.2f}-{y_max:.2f})"
+    plt.title(f"Detailed Structural Analysis of Region {title_range}\n({np.sum(mask)} points)", fontsize=14)
+    plt.grid(True, linestyle=':', alpha=0.4)
+    plt.xlim(x_min, x_max)
+    plt.ylim(y_min, y_max)
+    plt.gca().set_aspect('equal')
+    
+    filename = f"region_detailed_analysis_E{E:.3f}_gamma{gamma}.pdf"
+    plt.savefig(os.path.join(data_folder, filename))
+    plt.close()
+    print(f"  Detailed analysis saved to '{os.path.join(data_folder, filename)}'")
+    
+
+
 # --- メイン実行ブロック ---
 if __name__ == "__main__":
     start_time_main = time.time()
 
     # --- 1. 初期条件生成 ---
     initial_states, initial_params = generate_initial_conditions(
-        n_traj, E, gamma, px_fixed=px_init_val if use_fixed_px else None
+        n_traj, E, gamma, 
+        px_fixed=px_init_val if use_fixed_px else None,
+        focus_region=focus_region,  # 領域指定を追加
+        region_phi_y=region_phi_y,
+        region_phi_z=region_phi_z
     )
     actual_n_traj = len(initial_states) # 実際に生成できた数
 
@@ -648,6 +892,19 @@ if __name__ == "__main__":
         plt.savefig(os.path.join(data_folder, filename_hist))
         plt.close()
         print(f"  NHIM phase density plot saved to '{os.path.join(data_folder, filename_hist)}'")
+        
+        # 領域ズーム可視化を追加
+        region_mask = visualize_phase_distribution_with_zoom(
+            phi_y_recrossed, phi_z_recrossed, recrossed_times_only,
+            focus_region=focus_region,
+            region_phi_y=region_phi_y,
+            region_phi_z=region_phi_z,
+            margin=region_margin
+        )
+        
+        # 指定領域の詳細分析
+        if focus_region and np.sum(region_mask) > 0:
+            analyze_region_in_detail(phi_y_recrossed, phi_z_recrossed, recrossed_times_only, region_mask)
 
     # --- 6. 微妙な構造の抽出と可視化 ---
     if n_recrossed > 100:  # 十分なデータがある場合のみ実行
