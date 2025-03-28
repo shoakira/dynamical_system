@@ -9,22 +9,28 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # シミュレーションパラメータ
-E = 1.2           # 全エネルギー（サドルエネルギー1より上）
+E = 1.01           # 全エネルギー（サドルエネルギー1より上）
 n_traj = 10000     # 初期状態の数
-T_max = 1000.0     # 最長シミュレーション時間
+T_max = 10000.0     # 最長シミュレーション時間
 dt = 0.01         # 時間刻み幅
 
-# ポテンシャルとその微分
+# 非線形相互作用パラメータ
+gamma = 0.3  # 相互作用の強さ
+
+# ポテンシャルとその微分（非線形相互作用項を追加）
 def V(x, y):
-    return (x**2 - 1)**2 + 0.5 * y**2 + y**4
+    # 元のポテンシャル + 非線形相互作用項（x^2 * y^2）
+    return (x**2 - 1)**2 + 0.5 * y**2 + y**4 + gamma * x**2 * y**2
 
 def dVdx(x, y):
-    # d/dx (x^2 -1)^2 = 4*x*(x^2-1)
-    return 4 * x * (x**2 - 1)
+    # 元の導関数 + 相互作用項の導関数
+    # d/dx (gamma * x^2 * y^2) = 2 * gamma * x * y^2
+    return 4 * x * (x**2 - 1) + 2 * gamma * x * y**2
 
 def dVdy(x, y):
-    # d/dy (0.5*y^2) = y,  d/dy (y^4) = 4*y^3
-    return y + 4 * y**3
+    # 元の導関数 + 相互作用項の導関数
+    # d/dy (gamma * x^2 * y^2) = 2 * gamma * x^2 * y
+    return y + 4 * y**3 + 2 * gamma * x**2 * y
 
 # ハミルトニアン（エネルギー）計算関数
 def hamiltonian(state):
@@ -147,20 +153,32 @@ for i in range(n_traj):
     else:
         recrossing_times.append(T_max)
 
+# 生存確率の計算部分はそのまま
 recrossing_times = np.array(recrossing_times)
-
-# 生存確率（再帰渡していない軌道の割合）を時間の関数として計算
 t_vals = np.logspace(np.log10(1e-2), np.log10(T_max), 100)
 survival = np.array([np.mean(recrossing_times > t) for t in t_vals])
 
-# 両対数プロットの作成
-plt.figure(figsize=(8, 6))
-plt.loglog(t_vals, survival, marker='o', linestyle='-')
-plt.xlabel("Time")
-plt.ylabel("Population fraction")
-plt.title("Survival Function: Recrossing of the Saddle")
-plt.grid(True, which="both", ls="--")
+# 片対数と両対数プロットを並べて表示
+fig, axs = plt.subplots(1, 2, figsize=(16, 6))
+
+# 片対数プロット（左側）
+axs[0].semilogy(t_vals, survival, marker='o', linestyle='-')
+axs[0].set_xlabel("Time")
+axs[0].set_ylabel("Population fraction")
+axs[0].set_title("Semi-log Plot: Survival Function")
+axs[0].grid(True, which="both", ls="--")
+
+# 両対数プロット（右側）
+axs[1].loglog(t_vals, survival, marker='o', linestyle='-')
+axs[1].set_xlabel("Time")
+axs[1].set_ylabel("Population fraction")
+axs[1].setTitle("Log-log Plot: Survival Function")
+axs[1].grid(True, which="both", ls="--")
+
+# グラフ全体の調整
+plt.suptitle("Recrossing of the Saddle: Survival Analysis", fontsize=16)
 plt.tight_layout()
+plt.subplots_adjust(top=0.9)  # タイトル用のスペースを確保
 plt.show()
 
 
